@@ -5,6 +5,7 @@ import torchaudio
 import soundfile as sf
 import numpy as np
 import torch
+import subprocess
 from typing import Union
 from utils.logger import default_logger as logger
 
@@ -17,7 +18,7 @@ def convert_audio_format(audio_data: Union[np.ndarray, torch.Tensor],
     参数:
         audio_data: 音频数据（numpy数组或PyTorch张量）
         sample_rate: 采样率，默认16000Hz
-        output_format: 输出格式，支持mp3和wav，默认为mp3
+        output_format: 输出格式，支持mp3、wav和aac，默认为mp3
     
     返回:
         二进制音频数据
@@ -103,6 +104,67 @@ def convert_audio_format(audio_data: Union[np.ndarray, torch.Tensor],
                 # 确保WAV临时文件被清理
                 if os.path.exists(wav_temp.name):
                     os.remove(wav_temp.name)
+        
+        # 处理AAC格式
+        elif output_format.lower() == "aac":
+            logger.info("正在生成AAC格式音频")
+            
+            # 创建临时WAV文件
+            wav_temp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            wav_temp.close()
+            
+            try:
+                # 保存为WAV
+                sf.write(wav_temp.name, audio_data, sample_rate, format="WAV", subtype="PCM_16")
+                logger.info(f"临时WAV文件已创建: {wav_temp.name}")
+                
+                # 创建临时AAC文件
+                aac_temp = tempfile.NamedTemporaryFile(suffix=".aac", delete=False)
+                aac_temp.close()
+                
+                try:
+                    # 使用ffmpeg将WAV转换为AAC
+                    cmd = [
+                        'ffmpeg',
+                        '-y',  # 覆盖输出文件
+                        '-i', wav_temp.name,  # 输入文件
+                        '-c:a', 'aac',  # AAC编码器
+                        '-b:a', '192k',  # 比特率
+                        aac_temp.name  # 输出文件
+                    ]
+                    
+                    # 执行ffmpeg命令
+                    process = subprocess.run(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE
+                    )
+                    
+                    if process.returncode != 0:
+                        raise RuntimeError(f"FFmpeg转换失败: {process.stderr.decode()}")
+                    
+                    logger.info(f"转换为AAC成功: {aac_temp.name}")
+                    
+                    # 读取AAC数据
+                    with open(aac_temp.name, "rb") as f:
+                        aac_data = f.read()
+                        
+                    return aac_data
+                except Exception as e:
+                    logger.error(f"转换为AAC失败，尝试返回WAV格式: {str(e)}")
+                    # AAC转换失败，返回WAV格式
+                    with open(wav_temp.name, "rb") as f:
+                        wav_data = f.read()
+                    return wav_data
+                finally:
+                    # 清理AAC临时文件
+                    if os.path.exists(aac_temp.name):
+                        os.remove(aac_temp.name)
+            finally:
+                # 确保WAV临时文件被清理
+                if os.path.exists(wav_temp.name):
+                    os.remove(wav_temp.name)
+        
         else:
             raise ValueError(f"不支持的输出格式: {output_format}")
     except Exception as e:

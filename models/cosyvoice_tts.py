@@ -8,7 +8,7 @@ import os
 from typing import Dict, Any, Generator, Tuple
 
 from models.thread_safe_base import ThreadSafeModelBase
-from third_party import CosyVoice2, load_wav
+from third_party import CosyVoice2, load_wav, set_all_random_seed
 
 
 class CosyVoiceTTS(ThreadSafeModelBase):
@@ -324,6 +324,10 @@ class CosyVoiceTTS(ThreadSafeModelBase):
                 "gender": self.speaker_json[speaker]["gender"], 
             })
         return speakers
+    
+    def set_seed(self, seed: int):
+        """设置随机种子"""
+        set_all_random_seed(seed)
 
 
 if __name__ == "__main__":

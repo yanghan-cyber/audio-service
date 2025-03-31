@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>语音合成演示</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        textarea, select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .radio-group {
+            margin: 10px 0;
+        }
+        .radio-group label {
+            display: inline-block;
+            margin-right: 15px;
+            font-weight: normal;
+        }
+        .checkbox-group {
+            margin: 10px 0;
+        }
+        .checkbox-group label {
+            display: inline-block;
+            font-weight: normal;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #audioPlayer {
+            width: 100%;
+            margin-top: 20px;
+        }
+        .loading {
+            display: none;
+            margin-top: 10px;
+            color: #666;
+        }
+        .warning {
+            color: #856404;
+            background-color: #fff3cd;
+            border: 1px solid #ffeeba;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>语音合成演示</h1>
+        <div class="form-group">
+            <label for="text">输入文本：</label>
+            <textarea id="text" rows="4">他不是温吞水，而是一杯燃烧的烈酒，一口饮下便能点燃灵魂的火焰！ 他的诗句不是象牙塔里的低吟浅唱，而是划破夜空的雷霆，震耳欲聋，直击人心！ 他挥舞的不是鹅毛笔，而是一把锋利的思想之剑，毫不留情地刺向虚伪与平庸！ 他眼中燃烧着星辰般的光芒，那是对自由的渴望，对真理的狂热，对一切陈规陋习的蔑视！ 他仿佛是酒神狄俄尼索斯附体，放浪形骸，纵情歌唱，在时代的舞台上，以诗为武器，掀起一场酣畅淋漓的精神风暴！ 他的存在本身，就是对这个沉闷世界的最好嘲讽！</textarea>
+        </div>
+        <div class="form-group">
+            <label for="voice">选择声音：</label>
+            <select id="voice"></select>
+        </div>
+        <div class="form-group">
+            <label>音频格式：</label>
+            <div class="radio-group">
+                <label>
+                    <input type="radio" name="format" value="mp3" checked onchange="updateStreamingWarning()"> MP3
+                </label>
+                <label>
+                    <input type="radio" name="format" value="aac" onchange="updateStreamingWarning()"> AAC
+                </label>
+                <label>
+                    <input type="radio" name="format" value="wav" onchange="updateStreamingWarning()"> WAV
+                </label>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="instruct">Instruct 提示词：</label>
+            <textarea id="instruct" rows="2" placeholder="请输入 Instruct 提示词（可选）"></textarea>
+        </div>
+        <div class="form-group">
+            <div class="checkbox-group">
+                <label>
+                    <input type="checkbox" id="streamMode" checked onchange="updateStreamingWarning()"> 启用流式传输
+                </label>
+            </div>
+            <div id="streamingWarning" class="warning">
+                WAV格式不支持流式传输，将使用普通下载方式。
+            </div>
+        </div>
+        <button onclick="generateSpeech()">生成语音</button>
+        <div id="loading" class="loading">正在生成语音...</div>
+        <audio id="audioPlayer" controls></audio>
+    </div>
+
+    <script>
+        // 获取API基础URL
+        const getBaseUrl = () => {
+            const protocol = window.location.protocol;
+            const hostname = window.location.hostname;
+            const port = window.location.port;
+            return `${protocol}//${hostname}${port ? ':' + port : ''}/v1/audio`;
+        };
+
+        // 获取可用的声音列表
+        async function loadVoices() {
+            try {
+                const response = await fetch(`${getBaseUrl()}/voices`);
+                const voices = await response.json();
+                const voiceSelect = document.getElementById('voice');
+                voices.forEach(voice => {
+                    const option = document.createElement('option');
+                    option.value = voice.id;
+                    option.textContent = `${voice.name} (${voice.gender === 'female' ? '女' : '男'})`;
+                    voiceSelect.appendChild(option);
+                });
+            } catch (error) {
+                console.error('加载声音列表失败:', error);
+            }
+        }
+
+        // 更新流式传输警告
+        function updateStreamingWarning() {
+            const format = document.querySelector('input[name="format"]:checked').value;
+            const streamMode = document.getElementById('streamMode');
+            const warning = document.getElementById('streamingWarning');
+            
+            if (format === 'wav' && streamMode.checked) {
+                warning.style.display = 'block';
+                warning.textContent = 'WAV格式不支持流式传输，将使用普通下载方式。';
+            } else {
+                warning.style.display = 'none';
+            }
+        }
+
+        // 生成语音
+        async function generateSpeech() {
+            const text = document.getElementById('text').value;
+            const voice = document.getElementById('voice').value;
+            const format = document.querySelector('input[name="format"]:checked').value;
+            const instruct = document.getElementById('instruct').value.trim();
+            const streamMode = document.getElementById('streamMode').checked && format !== 'wav';
+            const loading = document.getElementById('loading');
+            const audioPlayer = document.getElementById('audioPlayer');
+
+            if (!text) {
+                alert('请输入要转换的文本');
+                return;
+            }
+
+            loading.style.display = 'block';
+            audioPlayer.style.display = 'none';
+
+            try {
+                const endpoint = streamMode ? '/stream_speech' : '/speech';
+                const response = await fetch(`${getBaseUrl()}${endpoint}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        input: text,
+                        voice: voice,
+                        speed: 1.0,
+                        response_format: format,
+                        instruct: instruct || null
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('语音生成请求失败');
+                }
+
+                if (!streamMode) {
+                    // 非流式传输：直接使用 Blob
+                    const blob = await response.blob();
+                    const contentType = format === 'mp3' ? 'audio/mpeg' : 
+                                     format === 'aac' ? 'audio/aac' : 'audio/wav';
+                    const audioBlob = new Blob([blob], { type: contentType });
+                    audioPlayer.src = URL.createObjectURL(audioBlob);
+                    audioPlayer.style.display = 'block';
+                    
+                    audioPlayer.addEventListener('canplay', () => {
+                        audioPlayer.play();
+                        loading.style.display = 'none';
+                    });
+                } else {
+                    // 流式传输：使用 MediaSource API
+                    const reader = response.body.getReader();
+                    const mediaSource = new MediaSource();
+                    audioPlayer.src = URL.createObjectURL(mediaSource);
+
+                    mediaSource.addEventListener('sourceopen', async () => {
+                        const mimeType = format === 'mp3' ? 'audio/mpeg' : 'audio/aac';
+                        const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+                        const chunks = [];
+
+                        while (true) {
+                            const {done, value} = await reader.read();
+                            
+                            if (done) {
+                                mediaSource.endOfStream();
+                                break;
+                            }
+
+                            chunks.push(value);
+                            
+                            if (!sourceBuffer.updating) {
+                                const chunk = new Uint8Array(chunks.reduce((acc, val) => [...acc, ...val], []));
+                                sourceBuffer.appendBuffer(chunk);
+                                chunks.length = 0;
+                            }
+                        }
+                    });
+
+                    audioPlayer.style.display = 'block';
+                    audioPlayer.play();
+                }
+            } catch (error) {
+                console.error('生成语音失败:', error);
+                alert('生成语音失败: ' + error.message);
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        // 页面加载时初始化
+        window.onload = function() {
+            loadVoices();
+            updateStreamingWarning();
+        };
+    </script>
+</body>
+</html> 

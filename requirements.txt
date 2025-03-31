@@ -1,1 +1,9 @@
-loguru>=0.7.0 
+loguru>=0.7.0
+fastapi
+uvicorn
+python-multipart
+soundfile
+numpy
+torch
+torchaudio
+jinja2 

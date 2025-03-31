@@ -11,6 +11,7 @@ class SpeechRequest(BaseModel):
     instruct: Optional[str] = Field(None, description="Control the voice of your generated audio with additional instruct.")
     response_format: Literal["mp3", "wav", "aac"] = Field("wav", description="The format of the audio generation")
     speed: float = Field(1.0, description="The speed of the audio generation")
+    random_seed: Optional[int] = Field(None, description="The random seed of the audio generation")
 
 
 class TranscriptionResponse(BaseModel):

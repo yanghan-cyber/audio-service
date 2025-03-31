@@ -1,5 +1,6 @@
 from functools import lru_cache
 import json
+from random import randint
 import torch
 import time
 import gc
@@ -89,6 +90,7 @@ class CosyVoiceTTS(ThreadSafeModelBase):
                 - instruct: 指令模式下的指令，如"用四川话说这句话"
                 - stream: 是否流式输出，默认False
                 - speed: 合成速度，默认1.0
+                - random_seed: 随机种子，用于控制生成的一致性，默认为None（随机）
 
         返回:
             始终返回音频数据生成器
@@ -106,6 +108,11 @@ class CosyVoiceTTS(ThreadSafeModelBase):
         instruct = infer_params.get("instruct")
         stream = infer_params.get("stream", False)
         speed = infer_params.get("speed", 1.0)
+        random_seed = infer_params.get("random_seed")
+        if random_seed is not None:
+            set_all_random_seed(random_seed)
+        else:
+            set_all_random_seed(randint(0, 2147483647))
 
         # 根据模式选择不同的合成方法
         if mode == "zero_shot":
@@ -138,6 +145,26 @@ class CosyVoiceTTS(ThreadSafeModelBase):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             gc.collect()
+
+    def reload_speaker_config(self) -> None:
+        """
+        重新加载speaker配置文件
+        
+        用于在添加或删除声音样本后刷新配置
+        """
+        try:
+            # 清除缓存
+            self._load_prompt.cache_clear()
+            
+            # 重新加载speaker.json
+            speaker_json_path = os.path.join(self.file_path, "speaker.json")
+            with open(speaker_json_path, "r", encoding="utf-8") as f:
+                self.speaker_json = json.load(f)
+                
+            self.logger.info("成功重新加载speaker配置")
+        except Exception as e:
+            self.logger.error(f"重新加载speaker配置失败: {str(e)}")
+            raise
 
     @lru_cache(maxsize=16)
     def _load_prompt(self, voice: str) -> Tuple[str, torch.Tensor]:
@@ -250,6 +277,7 @@ class CosyVoiceTTS(ThreadSafeModelBase):
         instruct=None,
         stream=False,
         speed=1.0,
+        random_seed=None,
     ):
         """
         通用语音合成接口（便捷方法）
@@ -261,10 +289,13 @@ class CosyVoiceTTS(ThreadSafeModelBase):
             instruct: 指令模式下的指令，如"用四川话说这句话"
             stream: 是否流式输出，默认False
             speed: 合成速度，默认1.0
+            random_seed: 随机种子，用于控制生成的一致性，默认为None（随机）
 
         返回:
             音频数据生成器
         """
+
+        
         infer_params = {
             "text": text,
             "voice": voice,
@@ -272,6 +303,7 @@ class CosyVoiceTTS(ThreadSafeModelBase):
             "instruct": instruct,
             "stream": stream,
             "speed": speed,
+            "random_seed": random_seed,
         }
         return self.infer(infer_params)
 

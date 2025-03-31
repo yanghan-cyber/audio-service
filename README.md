@@ -66,15 +66,15 @@ pip install -r requirements.txt
 python run.py
 ```
 
-服务默认运行在 http://0.0.0.0:8080
+服务默认运行在 http://127.0.0.1:8080
 
 ### Web界面
 
-访问 http://0.0.0.0:8080/v1/audio/ui 可以使用Web界面测试语音合成和识别功能。
+访问 http://127.0.0.1:8080/v1/audio/ui 可以使用Web界面测试语音合成和识别功能。
 
 ### API文档
 
-访问 http://0.0.0.0:8080/docs 可以查看完整的API文档。
+访问 http://127.0.0.1:8080/docs 可以查看完整的API文档。
 
 ## API接口
 

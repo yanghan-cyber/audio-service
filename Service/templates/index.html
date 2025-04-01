@@ -1116,6 +1116,14 @@
         <div class="container">
             <h2><i class="ri-speaker-line"></i> 语音合成</h2>
             <div class="form-group">
+                <label for="model"><i class="ri-ai-generate"></i> 选择模型：</label>
+                <select id="model" onchange="onModelChange()">
+                    <option value="cosyvoice">CosyVoice (语音合成与克隆)</option>
+                    <option value="kokora">Kokora (语音合成)</option>
+                </select>
+                <div class="text-muted">CosyVoice支持语音合成和克隆，Kokora仅支持语音合成但拥有更多内置声音</div>
+            </div>
+            <div class="form-group">
                 <label for="text"><i class="ri-text"></i> 输入文本：</label>
                 <textarea id="text" rows="4">他不是温吞水，而是一杯燃烧的烈酒，一口饮下便能点燃灵魂的火焰！ 他的诗句不是象牙塔里的低吟浅唱，而是划破夜空的雷霆，震耳欲聋，直击人心！ 他挥舞的不是鹅毛笔，而是一把锋利的思想之剑，毫不留情地刺向虚伪与平庸！ 他眼中燃烧着星辰般的光芒，那是对自由的渴望，对真理的狂热，对一切陈规陋习的蔑视！ 他仿佛是酒神狄俄尼索斯附体，放浪形骸，纵情歌唱，在时代的舞台上，以诗为武器，掀起一场酣畅淋漓的精神风暴！ 他的存在本身，就是对这个沉闷世界的最好嘲讽！</textarea>
             </div>
@@ -1140,8 +1148,8 @@
                     </label>
                 </div>
             </div>
-            <div class="form-group">
-                <label for="instruct"><i class="ri-magic-line"></i> Instruct 提示词：</label>
+            <div id="instructSection" class="form-group">
+                <label for="instruct"><i class="ri-magic-line"></i> Instruct 提示词 (仅用于CosyVoice)：</label>
                 <textarea id="instruct" rows="2" placeholder="请输入 Instruct 提示词（可选），例如：用开心的语气说这句话"></textarea>
             </div>
             <div class="form-group">
@@ -1151,6 +1159,17 @@
                     <button type="button" id="generateSeedBtn" onclick="generateRandomSeed()"><i class="ri-dice-line"></i> 随机</button>
                 </div>
                 <div class="seed-hint">设置固定种子可以保证多次生成结果一致，便于调整和复现</div>
+            </div>
+            <div id="kokoraSection" class="form-group" style="display: none;">
+                <label for="language"><i class="ri-translate-2"></i> 语言设置 (Kokora)：</label>
+                <select id="language">
+                    <option value="zh">中文</option>
+                    <option value="en">英文</option>
+                </select>
+                <div class="form-group">
+                    <label for="silenceDuration"><i class="ri-pause-circle-line"></i> 段落间静音时长 (秒)：</label>
+                    <input type="number" id="silenceDuration" min="0" max="2" step="0.1" value="0.1">
+                </div>
             </div>
             <div class="form-group">
                 <div class="checkbox-group">
@@ -1276,6 +1295,7 @@
         let uploadedFileBlob = null; // 新增：存储上传的文件
         let generationStartTime = 0; // 记录生成开始时间
         let currentSpeechController = null; // 用于控制语音生成的AbortController
+        let currentModel = "cosyvoice"; // 当前选择的模型
 
         // 获取API基础URL
         const getBaseUrl = () => {
@@ -1301,6 +1321,31 @@
                 loadVoiceDetails();
             }
         }
+        
+        // 处理模型变更
+        function onModelChange() {
+            currentModel = document.getElementById('model').value;
+            
+            // 更新UI显示
+            if (currentModel === "cosyvoice") {
+                document.getElementById('instructSection').style.display = 'block';
+                document.getElementById('kokoraSection').style.display = 'none';
+                // 显示上传声音样本选项卡，因为只有cosyvoice支持声音克隆
+                document.querySelector('.tab[onclick="switchTab(\'upload\')"]').style.display = 'block';
+            } else if (currentModel === "kokora") {
+                document.getElementById('instructSection').style.display = 'none';
+                document.getElementById('kokoraSection').style.display = 'block';
+                // 隐藏上传声音样本选项卡，因为kokora不支持声音克隆
+                document.querySelector('.tab[onclick="switchTab(\'upload\')"]').style.display = 'none';
+                // 如果当前是在上传选项卡，则切换到合成选项卡
+                if (document.getElementById('upload').classList.contains('active')) {
+                    switchTab('synthesis');
+                }
+            }
+            
+            // 重新加载对应模型的声音列表
+            loadVoices();
+        }
 
         // 切换帮助面板展开/折叠状态
         function toggleHelpPanel(header) {
@@ -1312,15 +1357,22 @@
         // 获取可用的声音列表
         async function loadVoices() {
             try {
-                const response = await fetch(`${getBaseUrl()}/voices`);
+                const response = await fetch(`${getBaseUrl()}/voices?model_type=${currentModel}`);
                 const voices = await response.json();
                 const voiceSelect = document.getElementById('voice');
                 voiceSelect.innerHTML = ''; // 清空现有选项
                 voices.forEach(voice => {
                     const option = document.createElement('option');
-                    option.value = voice.id;
-                    option.textContent = `${voice.name} (${voice.gender === 'female' ? '女' : '男'})`;
-                    option.dataset.id = voice.id;
+                    if (currentModel === "cosyvoice") {
+                        option.value = voice.id;
+                        option.textContent = `${voice.name} (${voice.gender === 'female' ? '女' : '男'})`;
+                        option.dataset.id = voice.id;
+                    } else {
+                        // kokora模型
+                        option.value = voice;
+                        option.textContent = voice;
+                        option.dataset.id = voice;
+                    }
                     voiceSelect.appendChild(option);
                 });
                 // 初始化试听按钮
@@ -1341,15 +1393,33 @@
         function previewVoice() {
             const voiceSelect = document.getElementById('voice');
             if (voiceSelect.value) {
-                const selectedOption = voiceSelect.options[voiceSelect.selectedIndex];
-                playSampleAudio(voiceSelect.value, selectedOption.textContent.split(' ')[0]);
+                if (currentModel === "cosyvoice") {
+                    // CosyVoice支持试听样本
+                    const selectedOption = voiceSelect.options[voiceSelect.selectedIndex];
+                    playSampleAudio(voiceSelect.value, selectedOption.textContent.split(' ')[0]);
+                } else {
+                    // Kokora没有试听样本，生成简短示例
+                    generateShortSample();
+                }
             }
+        }
+        
+        // 为Kokora生成简短示例
+        function generateShortSample() {
+            const text = "这是一个示例。";
+            const voice = document.getElementById('voice').value;
+            
+            // 显示提示
+            alert("Kokora模型没有预设样本，将为您生成简短示例。");
+            
+            // 以下代码复用了generateSpeech的部分逻辑
+            generateSpeech(true, text);
         }
 
         // 加载声音样本详细信息并填充网格
         async function loadVoiceDetails() {
             try {
-                const response = await fetch(`${getBaseUrl()}/voice_details`);
+                const response = await fetch(`${getBaseUrl()}/voice_details?model_type=${currentModel}`);
                 const voices = await response.json();
                 const voiceGrid = document.getElementById('voiceGrid');
                 voiceGrid.innerHTML = ''; // 清空现有内容
@@ -1380,7 +1450,12 @@
                     
                     const genderBadge = document.createElement('span');
                     genderBadge.className = 'gender-badge';
-                    genderBadge.textContent = voice.gender === 'female' ? '女' : '男';
+                    if (currentModel === "cosyvoice") {
+                        genderBadge.textContent = voice.gender === 'female' ? '女' : '男';
+                    } else {
+                        // Kokora模型没有性别信息
+                        genderBadge.textContent = 'Kokora';
+                    }
                     
                     cardHeader.appendChild(title);
                     cardHeader.appendChild(genderBadge);
@@ -1389,9 +1464,13 @@
                     const cardBody = document.createElement('div');
                     cardBody.className = 'voice-card-body';
                     
-                    const promptText = document.createElement('div');
-                    promptText.className = 'voice-card-prompt';
-                    promptText.textContent = voice.prompt_text;
+                    // 仅CosyVoice显示提示文本
+                    if (currentModel === "cosyvoice" && voice.prompt_text) {
+                        const promptText = document.createElement('div');
+                        promptText.className = 'voice-card-prompt';
+                        promptText.textContent = voice.prompt_text;
+                        cardBody.appendChild(promptText);
+                    }
                     
                     const cardActions = document.createElement('div');
                     cardActions.className = 'voice-card-actions';
@@ -1400,18 +1479,29 @@
                     const playButton = document.createElement('button');
                     playButton.className = 'play-button';
                     playButton.innerHTML = '<i class="ri-play-fill"></i> 播放';
-                    playButton.addEventListener('click', () => playSampleAudio(voice.id, voice.name));
                     
-                    // 删除按钮
-                    const deleteButton = document.createElement('button');
-                    deleteButton.className = 'delete-button';
-                    deleteButton.innerHTML = '<i class="ri-delete-bin-line"></i> 删除';
-                    deleteButton.addEventListener('click', () => deleteSample(voice.id, voice.name));
+                    if (currentModel === "cosyvoice") {
+                        // CosyVoice有样本可以播放
+                        playButton.addEventListener('click', () => playSampleAudio(voice.id, voice.name));
+                    } else {
+                        // Kokora生成示例
+                        playButton.addEventListener('click', () => {
+                            alert("Kokora模型没有预设样本，将为您生成简短示例。");
+                            generateSpeech(true, "这是一个简短的示例", voice.id);
+                        });
+                    }
                     
                     cardActions.appendChild(playButton);
-                    cardActions.appendChild(deleteButton);
                     
-                    cardBody.appendChild(promptText);
+                    // 只有CosyVoice模型有删除按钮
+                    if (currentModel === "cosyvoice") {
+                        const deleteButton = document.createElement('button');
+                        deleteButton.className = 'delete-button';
+                        deleteButton.innerHTML = '<i class="ri-delete-bin-line"></i> 删除';
+                        deleteButton.addEventListener('click', () => deleteSample(voice.id, voice.name));
+                        cardActions.appendChild(deleteButton);
+                    }
+                    
                     cardBody.appendChild(cardActions);
                     
                     // 组装卡片
@@ -1455,6 +1545,9 @@
         
         // 播放样本音频
         function playSampleAudio(speakerId, speakerName) {
+            // 只有CosyVoice模型支持样本音频
+            if (currentModel !== "cosyvoice") return;
+            
             const audioUrl = `${getBaseUrl()}/sample_audio/${speakerId}`;
             const samplePlayer = document.getElementById('samplePlayer');
             
@@ -1527,9 +1620,9 @@
         }
 
         // 生成语音
-        async function generateSpeech() {
-            const text = document.getElementById('text').value;
-            const voice = document.getElementById('voice').value;
+        async function generateSpeech(isPreview = false, previewText = null, previewVoice = null) {
+            const text = previewText || document.getElementById('text').value;
+            const voice = previewVoice || document.getElementById('voice').value;
             const format = document.querySelector('input[name="format"]:checked').value;
             const instruct = document.getElementById('instruct').value.trim();
             const seed = document.getElementById('seed').value;
@@ -1538,6 +1631,13 @@
             const audioPlayer = document.getElementById('audioPlayer');
             const responseTimeElement = document.getElementById('responseTime');
             const stopBtn = document.getElementById('stopGenerationBtn');
+            
+            // 获取当前选择的模型
+            const model = currentModel;
+            
+            // 获取Kokora特有参数
+            const language = document.getElementById('language').value;
+            const silenceDuration = document.getElementById('silenceDuration').value;
             
             // 重置响应时间显示
             responseTimeElement.classList.remove('active');
@@ -1562,19 +1662,29 @@
 
             try {
                 const endpoint = streamMode ? '/stream_speech' : '/speech';
+                const requestBody = {
+                    input: text,
+                    voice: voice,
+                    model: model,  // 使用所选模型
+                    speed: 1.0,
+                    response_format: format,
+                    random_seed: seed ? parseInt(seed) : null
+                };
+                
+                // 根据模型添加不同的参数
+                if (model === "cosyvoice" && instruct) {
+                    requestBody.instruct = instruct;
+                } else if (model === "kokora") {
+                    requestBody.language = language;
+                    requestBody.silence_duration = parseFloat(silenceDuration);
+                }
+                
                 const response = await fetch(`${getBaseUrl()}${endpoint}`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({
-                        input: text,
-                        voice: voice,
-                        speed: 1.0,
-                        response_format: format,
-                        instruct: instruct || null,
-                        random_seed: seed ? parseInt(seed) : null
-                    }),
+                    body: JSON.stringify(requestBody),
                     signal: signal // 添加AbortController的signal
                 });
 
@@ -1934,7 +2044,8 @@
 
         // 页面加载时初始化
         window.onload = function() {
-            loadVoices();
+            // 初始化模型
+            onModelChange();
             updateStreamingWarning();
             setupDragAndDrop();
             

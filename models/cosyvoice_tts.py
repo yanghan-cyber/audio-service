@@ -1,6 +1,5 @@
 from functools import lru_cache
 import json
-from random import randint
 import torch
 import time
 import gc
@@ -9,7 +8,7 @@ import os
 from typing import Dict, Any, Generator, Tuple
 
 from models.thread_safe_base import ThreadSafeModelBase
-from third_party import CosyVoice2, load_wav, set_all_random_seed
+from third_party import CosyVoice2, load_wav
 
 
 class CosyVoiceTTS(ThreadSafeModelBase):
@@ -90,7 +89,6 @@ class CosyVoiceTTS(ThreadSafeModelBase):
                 - instruct: 指令模式下的指令，如"用四川话说这句话"
                 - stream: 是否流式输出，默认False
                 - speed: 合成速度，默认1.0
-                - random_seed: 随机种子，用于控制生成的一致性，默认为None（随机）
 
         返回:
             始终返回音频数据生成器
@@ -108,11 +106,7 @@ class CosyVoiceTTS(ThreadSafeModelBase):
         instruct = infer_params.get("instruct")
         stream = infer_params.get("stream", False)
         speed = infer_params.get("speed", 1.0)
-        random_seed = infer_params.get("random_seed")
-        if random_seed is not None:
-            set_all_random_seed(random_seed)
-        else:
-            set_all_random_seed(randint(0, 2147483647))
+
 
         # 根据模式选择不同的合成方法
         if mode == "zero_shot":
@@ -277,7 +271,6 @@ class CosyVoiceTTS(ThreadSafeModelBase):
         instruct=None,
         stream=False,
         speed=1.0,
-        random_seed=None,
     ):
         """
         通用语音合成接口（便捷方法）
@@ -289,7 +282,6 @@ class CosyVoiceTTS(ThreadSafeModelBase):
             instruct: 指令模式下的指令，如"用四川话说这句话"
             stream: 是否流式输出，默认False
             speed: 合成速度，默认1.0
-            random_seed: 随机种子，用于控制生成的一致性，默认为None（随机）
 
         返回:
             音频数据生成器
@@ -303,7 +295,6 @@ class CosyVoiceTTS(ThreadSafeModelBase):
             "instruct": instruct,
             "stream": stream,
             "speed": speed,
-            "random_seed": random_seed,
         }
         return self.infer(infer_params)
 
@@ -356,10 +347,7 @@ class CosyVoiceTTS(ThreadSafeModelBase):
                 "gender": self.speaker_json[speaker]["gender"], 
             })
         return speakers
-    
-    def set_seed(self, seed: int):
-        """设置随机种子"""
-        set_all_random_seed(seed)
+
 
 
 if __name__ == "__main__":

@@ -1,18 +1,19 @@
+from random import randint
 import tempfile
 from models.funasr_stt import FunASRSTT
-from models.cosyvoice_tts import CosyVoiceTTS
-
+from models.tts_manager import get_tts, get_tts_manager
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks, Request
 from fastapi.responses import Response, StreamingResponse, HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
-from typing import Optional, Iterator
+from typing import Optional, Iterator, Dict, Any
 import torch
 import json
 import os
 from Service.schemas.audio import SpeechRequest, TranscriptionResponse
-from Service.utils.audio import convert_audio_format
+from utils.audio import convert_audio_format
 from Service.logger import get_logger
+from third_party import set_all_random_seed
 
 # 获取logger
 logger = get_logger()
@@ -21,10 +22,13 @@ error_logger = get_logger("error")
 
 logger.info("初始化语音处理模型")
 STT_MODEL = FunASRSTT()
-TTS_MODEL = CosyVoiceTTS()
+# 初始化TTS管理器，设置较长的超时时间
+get_tts_manager(timeout_seconds=1800)  # 30分钟超时
 
 STT_MODEL.load()
-TTS_MODEL.load()
+# 预热加载常用模型
+default_tts = get_tts("cosyvoice")
+default_tts.load()
 
 # 设置模板目录
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
@@ -41,9 +45,23 @@ def get_stt_model():
     global STT_MODEL
     return STT_MODEL
 
-def get_tts_model():
-    global TTS_MODEL
-    return TTS_MODEL
+def get_tts_model(model_type: str = "cosyvoice", model_params: Dict[str, Any] = None):
+    """
+    根据指定类型获取TTS模型
+    
+    参数:
+        model_type: TTS模型类型，可选值: "cosyvoice", "kokora"
+        model_params: 可选的模型参数
+        
+    返回:
+        TTS模型实例
+    """
+    if model_type not in ["cosyvoice", "kokora"]:
+        logger.warning(f"不支持的TTS模型类型: {model_type}，使用默认的cosyvoice")
+        model_type = "cosyvoice"
+    
+    logger.debug(f"获取TTS模型: {model_type}")
+    return get_tts(model_type, model_params)
 
 router = APIRouter(
     tags=["Audio"],
@@ -63,19 +81,47 @@ async def get_ui(request: Request):
     )
 
 @router.get("/voices")
-async def get_voices():
-    logger.info("获取可用声音列表")
-    tts_model = get_tts_model()
+async def get_voices(model_type: str = "cosyvoice"):
+    """
+    获取可用声音列表
+    
+    参数:
+        model_type: TTS模型类型，可选值: "cosyvoice", "kokora"
+    """
+    logger.info(f"获取可用声音列表，模型类型: {model_type}")
+    tts_model = get_tts_model(model_type)
     voices = tts_model.speaker_list
-    logger.debug(f"返回 {len(voices)} 个声音")
+    logger.debug(f"返回 {len(voices) if isinstance(voices, list) else '未知数量的'} 个声音")
     return voices
 
 @router.get("/voice_details")
-async def get_voice_details():
+async def get_voice_details(model_type: str = "cosyvoice"):
     """
     获取所有声音样本的详细信息，包括prompt_text
+    
+    参数:
+        model_type: TTS模型类型，可选值: "cosyvoice", "kokora"
     """
-    logger.info("获取声音样本详细信息")
+    logger.info(f"获取声音样本详细信息，模型类型: {model_type}")
+    
+    # 如果是kokora模型，返回内置的声音列表
+    if model_type == "kokora":
+        tts_model = get_tts_model(model_type)
+        speakers = tts_model.speaker_list
+        voice_details = []
+        for speaker in speakers:
+            # 为kokora模型构建简化的声音详情
+            voice_details.append({
+                "id": speaker,
+                "name": speaker,  # 使用ID作为名称
+                "gender": "unknown",  # kokora模型没有提供性别信息
+                "prompt_text": "",  # kokora模型不需要prompt_text
+                "path": ""  # kokora模型不需要音频文件路径
+            })
+        logger.debug(f"返回kokora模型的 {len(voice_details)} 个声音样本详情")
+        return voice_details
+    
+    # 对于CosyVoice模型，使用之前的逻辑
     try:
         # 读取speaker.json
         speaker_file = ASSET_DIR / "speaker.json"
@@ -88,12 +134,12 @@ async def get_voice_details():
             voice_details.append({
                 "id": speaker_id,
                 "name": info["name"],
-                "gender": info["gender"],
+                "gender": info["gender"], 
                 "prompt_text": info["prompt_text"],
                 "path": info["path"]
             })
         
-        logger.debug(f"返回 {len(voice_details)} 个声音样本详情")
+        logger.debug(f"返回cosyvoice模型的 {len(voice_details)} 个声音样本详情")
         return voice_details
     
     except Exception as e:
@@ -160,11 +206,12 @@ async def upload_voice(
     audio_file: UploadFile = File(...),
 ):
     """
-    上传声音样本并添加到speaker列表
+    上传声音样本并添加到speaker列表 (仅适用于CosyVoice模型)
     """
     logger.info(f"上传声音样本: {name}")
     try:
-        tts_model = get_tts_model()
+        # 获取CosyVoice模型
+        tts_model = get_tts_model("cosyvoice")
         
         # 读取现有的speaker.json
         speaker_file = ASSET_DIR / "speaker.json"
@@ -228,11 +275,12 @@ async def upload_voice(
 @router.delete("/delete_voice/{speaker_id}")
 async def delete_voice(speaker_id: str):
     """
-    删除声音样本
+    删除声音样本 (仅适用于CosyVoice模型)
     """
     logger.info(f"删除声音样本: {speaker_id}")
     try:
-        tts_model = get_tts_model()
+        # 获取CosyVoice模型
+        tts_model = get_tts_model("cosyvoice")
         
         # 读取现有的speaker.json
         speaker_file = ASSET_DIR / "speaker.json"
@@ -277,43 +325,72 @@ async def delete_voice(speaker_id: str):
 
 @router.post("/speech", response_class=Response)
 async def speech(request: SpeechRequest):
-    logger.info(f"文本转语音请求: 文本长度={len(request.input)}, 声音={request.voice}")
+    logger.info(f"文本转语音请求: 文本长度={len(request.input)}, 声音={request.voice}, 模型类型={request.model}")
     try:
-        tts_model = get_tts_model()
+        # 根据请求中的model_type参数获取对应的TTS模型
+        tts_model = get_tts_model(request.model)
         
         # 设置随机种子（如果提供）
         random_seed = request.random_seed
-        
+        if random_seed is not None:
+            set_all_random_seed(random_seed)
+        else:
+            set_all_random_seed(randint(0, 2147483647))
         infer_params = {
             "text": request.input,
             "voice": request.voice,
             "instruct": request.instruct,
             "speed": request.speed,
-            "random_seed": random_seed,
         }
         
-        if request.instruct:
-            infer_params["mode"] = "instruct"
-            logger.debug(f"使用指令模式: {request.instruct}")
-        else:
-            infer_params["mode"] = "zero_shot"
-            logger.debug("使用零样本模式")
+        # 判断模型类型和请求参数，适配不同模型的参数需求
+        if request.model == "cosyvoice":
+            if request.instruct:
+                infer_params["mode"] = "instruct"
+                logger.debug(f"使用指令模式: {request.instruct}")
+            else:
+                infer_params["mode"] = "zero_shot"
+                logger.debug("使用零样本模式")
+        elif request.model == "kokora":
+            # kokora模型参数调整
+            # 移除kokora不支持的参数
+            if "instruct" in infer_params:
+                del infer_params["instruct"]
+            if "mode" in infer_params:
+                del infer_params["mode"]
+            # 可以添加kokora特有的参数
+            infer_params["language"] = request.language if hasattr(request, "language") else "zh"
+            infer_params["silence_duration"] = request.silence_duration if hasattr(request, "silence_duration") else 0.1
 
-        logger.debug("开始生成语音")
+        logger.debug(f"开始使用{request.model}模型生成语音")
         audio_generator = tts_model.infer(infer_params)
         all_audio_chunks = [chunk for chunk in audio_generator]
-        all_audio = torch.cat(all_audio_chunks, dim=1)
-        sample_rate = tts_model.sample_rate
+        
+        if all_audio_chunks:
+            all_audio = torch.cat(all_audio_chunks, dim=1) if request.model == "cosyvoice" else all_audio_chunks[0] if len(all_audio_chunks) == 1 else torch.from_numpy(np.concatenate(all_audio_chunks))
+            sample_rate = tts_model.sample_rate
 
-        logger.debug(f"转换音频格式为: {request.response_format}")
-        audio_binary = convert_audio_format(all_audio, sample_rate, request.response_format)
-        content_type = "audio/mpeg" if request.response_format == "mp3" else "audio/wav"
+            logger.debug(f"转换音频格式为: {request.response_format}")
+            audio_binary = convert_audio_format(all_audio, sample_rate, request.response_format)
+            
+            # 根据格式设置正确的 Content-Type
+            content_type = {
+                "mp3": "audio/mpeg",
+                "wav": "audio/wav",
+                "aac": "audio/aac",
+                "m4a": "audio/mp4",
+                "ogg": "audio/ogg",
+                "flac": "audio/flac",
+                "webm": "audio/webm"
+            }.get(request.response_format, "audio/mpeg")
 
-        logger.info("语音合成完成")
-        return Response(
-            content=audio_binary,
-            media_type=content_type
-        )
+            logger.info("语音合成完成")
+            return Response(
+                content=audio_binary,
+                media_type=content_type
+            )
+        else:
+            raise ValueError("生成的音频为空")
 
     except Exception as e:
         error_message = f"语音生成失败: {str(e)}"
@@ -328,9 +405,10 @@ async def stream_speech(request: SpeechRequest):
     """
     流式文本转语音接口，实时返回生成的语音片段
     """
-    logger.info(f"流式文本转语音请求: 文本长度={len(request.input)}, 声音={request.voice}")
+    logger.info(f"流式文本转语音请求: 文本长度={len(request.input)}, 声音={request.voice}, 模型类型={request.model}")
     try:
-        tts_model = get_tts_model()
+        # 根据请求中的model_type参数获取对应的TTS模型
+        tts_model = get_tts_model(request.model)
         
         # 设置随机种子（如果提供）
         random_seed = request.random_seed
@@ -344,14 +422,26 @@ async def stream_speech(request: SpeechRequest):
             "random_seed": random_seed,
         }
         
-        if request.instruct:
-            infer_params["mode"] = "instruct"
-            logger.debug(f"使用指令模式: {request.instruct}")
-        else:
-            infer_params["mode"] = "zero_shot"
-            logger.debug("使用零样本模式")
+        # 判断模型类型和请求参数，适配不同模型的参数需求
+        if request.model == "cosyvoice":
+            if request.instruct:
+                infer_params["mode"] = "instruct"
+                logger.debug(f"使用指令模式: {request.instruct}")
+            else:
+                infer_params["mode"] = "zero_shot"
+                logger.debug("使用零样本模式")
+        elif request.model == "kokora":
+            # kokora模型参数调整
+            # 移除kokora不支持的参数
+            if "instruct" in infer_params:
+                del infer_params["instruct"]
+            if "mode" in infer_params:
+                del infer_params["mode"]
+            # 可以添加kokora特有的参数
+            infer_params["language"] = request.language if hasattr(request, "language") else "zh"
+            infer_params["silence_duration"] = request.silence_duration if hasattr(request, "silence_duration") else 0.1
 
-        logger.debug("开始流式生成语音")
+        logger.debug(f"开始使用{request.model}模型流式生成语音")
         
         # 创建音频流生成器函数
         def generate_audio_chunks() -> Iterator[bytes]:
@@ -359,7 +449,15 @@ async def stream_speech(request: SpeechRequest):
             audio_generator = tts_model.infer(infer_params)
             
             chunk_count = 0
+            import numpy as np  # 确保numpy已导入
+            
             for chunk in audio_generator:
+                # 处理不同模型可能返回不同类型的音频数据
+                if request.model == "kokora":
+                    # kokora返回的是numpy数组
+                    if not isinstance(chunk, torch.Tensor):
+                        chunk = torch.from_numpy(chunk)
+                
                 # 将每个音频片段转换为指定格式的二进制数据
                 audio_binary = convert_audio_format(chunk, sample_rate, request.response_format)
                 chunk_count += 1
@@ -368,7 +466,16 @@ async def stream_speech(request: SpeechRequest):
             
             logger.info(f"流式语音合成完成，共 {chunk_count} 个片段")
         
-        content_type = "audio/mpeg" if request.response_format == "mp3" else "audio/aac" if request.response_format == "aac" else "audio/wav"
+        # 根据格式设置正确的 Content-Type
+        content_type = {
+            "mp3": "audio/mpeg",
+            "wav": "audio/wav",
+            "aac": "audio/aac",
+            "m4a": "audio/mp4",
+            "ogg": "audio/ogg",
+            "flac": "audio/flac",
+            "webm": "audio/webm"
+        }.get(request.response_format, "audio/mpeg")
         
         return StreamingResponse(
             generate_audio_chunks(),
